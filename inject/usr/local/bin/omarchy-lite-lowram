@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Apply Omarchy Lite low-RAM graphics settings to the current user.
+# Safe to run repeatedly. Does not touch the Omarchy launcher (Super+Space).
+set -euo pipefail
+
+HOME_DIR="${HOME:-/root}"
+HYPR="$HOME_DIR/.config/hypr"
+ENV_D="$HOME_DIR/.config/environment.d"
+mkdir -p "$HYPR" "$ENV_D"
+
+cat > "$HYPR/looknfeel.lua" <<'EOF'
+-- Omarchy Lite: low-RAM graphics profile for old CPUs and <2 GB RAM.
+-- These load AFTER Omarchy defaults, so the theme and launcher stay intact.
+hl.config({
+  animations = { enabled = false },
+  decoration = {
+    blur = { enabled = false },
+    shadow = { enabled = false },
+    rounding = 0,
+  },
+  general = {
+    gaps_in = 5,
+    gaps_out = 10,
+    border_size = 2,
+  },
+  misc = {
+    disable_hyprland_logo = true,
+    disable_splash_rendering = true,
+    disable_scale_notification = true,
+  },
+})
+EOF
+
+cat > "$HYPR/monitors.lua" <<'EOF'
+-- Omarchy Lite: keep framebuffers small. Scale 2 wastes RAM on old machines.
+local omarchy_monitor_scale = 1
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = omarchy_monitor_scale })
+hl.env("GDK_SCALE", "1")
+EOF
+
+cat > "$ENV_D/omarchy-lite.conf" <<'EOF'
+GDK_SCALE=1
+QT_QPA_PLATFORMTHEME=gtk3
+EOF
+
+printf '%s\n' \
+  "Omarchy Lite low-RAM profile applied for $HOME_DIR." \
+  "  - animations off" \
+  "  - blur/shadow off" \
+  "  - GDK scale 1 (was 2)" \
+  "Reload with SUPER + CTRL + RETURN, or log out and back in."

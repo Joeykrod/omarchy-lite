@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+# Omarchy Lite - offline legacy GPU detection and automatic fallback.
+#
+# No network, no package downloads. On modern hardware this is a no-op and
+# removes any previously applied workarounds, so a newer PC keeps full GPU
+# acceleration. On legacy Intel GMA hardware it writes Mesa/uwsm overrides,
+# disables the split-monitor-workspaces plugin and adds the Limine boot tweak.
+set -uo pipefail
+
+SYSTEM=0
+FORCE=0
+FORCE_SW=0
+QUIET=0
+
+usage() {
+  cat <<'EOF'
+Usage: omarchy-lite-gpu-detect [options]
+
+Options:
+  --system           Write global config for all users (requires root).
+  --force            Ignore the "already applied" marker.
+  --force-software   Force software rendering / legacy GPU profile.
+  --quiet            Only write the log, do not print.
+  -h, --help         Show this help.
+
+With no options, only the current user's config is updated. This is also
+what the post-boot Omarchy hook uses.
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --system) SYSTEM=1 ;;
+    --force) FORCE=1 ;;
+    --force-software|--safe-mode) FORCE_SW=1; FORCE=1 ;;
+    --quiet) QUIET=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) printf 'Unknown option: %s\n' "$arg" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+if (( SYSTEM )) && [[ $EUID -ne 0 ]]; then
+  printf 'omarchy-lite-gpu-detect: --system requires root\n' >&2
+  exit 1
+fi
+
+if (( SYSTEM )); then
+  STATE_DIR=/var/lib/omarchy-lite
+  LOG=/var/log/omarchy-lite-gpu.log
+else
+  HOME_DIR=${HOME:-/root}
+  STATE_DIR="$HOME_DIR/.local/state/omarchy-lite"
+  LOG="$STATE_DIR/gpu-setup.log"
+fi
+MARKER="$STATE_DIR/legacy-gpu-applied"
+
+mkdir -p "$STATE_DIR" 2>/dev/null || true
+log() {
+  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$LOG" 2>/dev/null || true
+  (( QUIET )) || printf '%s\n' "$*"
+}
+
+# ---------------------------------------------------------------------------
+# Detection - lspci first, sysfs fallback. Both are completely offline.
+# ---------------------------------------------------------------------------
+detect_gpu() {
+  local line="" d cls vendor device
+  if command -v lspci >/dev/null 2>&1; then
+    line=$(lspci -nn 2>/dev/null | grep -iE 'vga compatible|3d controller|display controller' | head -n1 || true)
+  fi
+
+  if [[ -z "$line" && -d /sys/bus/pci/devices ]]; then
+    for d in /sys/bus/pci/devices/*; do
+      [[ -r "$d/class" ]] || continue
+      cls=$(cat "$d/class" 2>/dev/null || true)
+      case "$cls" in
+        0x030000*|0x030001*|0x030002*|0x030200*)
+          vendor=$(cat "$d/vendor" 2>/dev/null || true)
+          device=$(cat "$d/device" 2>/dev/null || true)
+          vendor=${vendor#0x}; device=${device#0x}
+          line="sysfs ${vendor}:${device}"
+          break
+          ;;
+      esac
+    done
+  fi
+
+  printf '%s\n' "${line:-unknown}"
+}
+
+is_legacy_gpu() {
+  local line=$1
+  # Intel pre-Sandy-Bridge integrated GPUs expose at most GL 2.1 / GLES 2.0.
+  # Hyprland needs GLES 3.0, so these need Mesa overrides + llvmpipe.
+  case "$line" in
+    *8086:2562*|*8086:2572*|*8086:2582*|*8086:2592*|*8086:2772*|\
+    *8086:2792*|*8086:27a2*|*8086:27ae*|*8086:29a2*|*8086:2a02*|\
+    *8086:2a12*|*8086:2e02*|*8086:2e12*|*8086:2e22*|*8086:3577*|\
+    *8086:3582*|*8086:8102*|*8086:8112*|*8086:a011*|*8086:a012*) return 0 ;;
+  esac
+  case "$line" in
+    *845G*|*865G*|*855GM*|*915G*|*915GM*|*945G*|*945GM*|*82945G*|\
+    *GMA*950*|*GMA*3100*|*GMA*X3100*|*GMA*X4500*|*G31*|*GM45*) return 0 ;;
+  esac
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Config writers
+# ---------------------------------------------------------------------------
+env_body() {
+  cat <<'EOF'
+MESA_GLES_VERSION_OVERRIDE=3.0
+MESA_GL_VERSION_OVERRIDE=3.00
+LIBGL_ALWAYS_SOFTWARE=1
+GALLIUM_DRIVER=llvmpipe
+EOF
+}
+
+uwsm_body() {
+  cat <<'EOF'
+# Omarchy Lite: legacy Intel GMA exposes only GLES 2.0 / GL 2.1.
+# Advertise GLES 3.0 and render via llvmpipe so Hyprland can start.
+export MESA_GLES_VERSION_OVERRIDE=3.0
+export MESA_GL_VERSION_OVERRIDE=3.00
+export LIBGL_ALWAYS_SOFTWARE=1
+export GALLIUM_DRIVER=llvmpipe
+EOF
+}
+
+chown_home_paths() {
+  local uid_gid=$1; shift
+  [[ $uid_gid == 0:0 ]] && return 0
+  local p
+  for p in "$@"; do
+    [[ -e "$p" ]] && chown -R "$uid_gid" "$p" 2>/dev/null || true
+  done
+}
+
+disable_split_plugin_for_home() {
+  local home=$1 uid_gid=$2 f shell_cfg tmp
+  shopt -s nullglob
+  for f in "$home"/.config/hypr/*split-monitor* \
+           "$home"/.config/hypr/plugins/*split-monitor*; do
+    [[ -f "$f" ]] || continue
+    [[ "$f" == *.disabled-by-omarchy-lite ]] && continue
+    mv "$f" "$f.disabled-by-omarchy-lite" 2>/dev/null || true
+  done
+  shopt -u nullglob
+
+  shell_cfg="$home/.config/omarchy/shell.json"
+  if [[ -f "$shell_cfg" ]] && command -v jq >/dev/null 2>&1; then
+    tmp=$(mktemp "${shell_cfg}.XXXXXX") || return 0
+    if jq '
+      .disabledPlugins = (
+        ((.disabledPlugins // []) +
+         ["omacom.split-monitor-workspaces", "omarchy.split-monitor-workspaces"])
+        | unique
+      )
+    ' "$shell_cfg" >"$tmp" 2>/dev/null; then
+      chown_home_paths "$uid_gid" "$tmp"
+      mv "$tmp" "$shell_cfg" 2>/dev/null || rm -f "$tmp"
+    else
+      rm -f "$tmp"
+    fi
+  fi
+}
+
+restore_split_plugin_for_home() {
+  local home=$1 uid_gid=$2 f orig shell_cfg tmp
+  shopt -s nullglob
+  for f in "$home"/.config/hypr/*.disabled-by-omarchy-lite \
+           "$home"/.config/hypr/plugins/*.disabled-by-omarchy-lite; do
+    [[ -f "$f" ]] || continue
+    orig=${f%.disabled-by-omarchy-lite}
+    mv "$f" "$orig" 2>/dev/null || true
+  done
+  shopt -u nullglob
+
+  shell_cfg="$home/.config/omarchy/shell.json"
+  if [[ -f "$shell_cfg" ]] && command -v jq >/dev/null 2>&1; then
+    tmp=$(mktemp "${shell_cfg}.XXXXXX") || return 0
+    if jq '
+      .disabledPlugins = (
+        ((.disabledPlugins // []) -
+         ["omacom.split-monitor-workspaces", "omarchy.split-monitor-workspaces"])
+        | unique
+      )
+    ' "$shell_cfg" >"$tmp" 2>/dev/null; then
+      chown_home_paths "$uid_gid" "$tmp"
+      mv "$tmp" "$shell_cfg" 2>/dev/null || rm -f "$tmp"
+    else
+      rm -f "$tmp"
+    fi
+  fi
+}
+
+apply_to_home() {
+  local home=$1 uid_gid
+  [[ -d "$home" ]] || return 0
+  uid_gid=$(stat -c '%u:%g' "$home" 2>/dev/null || printf '0:0')
+
+  local uwsm="$home/.config/uwsm/env.d"
+  local envd="$home/.config/environment.d"
+  local state="$home/.local/state/omarchy-lite"
+  mkdir -p "$uwsm" "$envd" "$state" 2>/dev/null || true
+
+  uwsm_body >"$uwsm/60-intel-gles-override" 2>/dev/null || true
+  uwsm_body >"$uwsm/61-software-render" 2>/dev/null || true
+  env_body  >"$envd/omarchy-lite-gpu.conf" 2>/dev/null || true
+  touch "$state/legacy-gpu-applied" 2>/dev/null || true
+
+  chown_home_paths "$uid_gid" "$uwsm" "$envd" "$state"
+  disable_split_plugin_for_home "$home" "$uid_gid"
+}
+
+remove_from_home() {
+  local home=$1 uid_gid
+  [[ -d "$home" ]] || return 0
+  uid_gid=$(stat -c '%u:%g' "$home" 2>/dev/null || printf '0:0')
+
+  rm -f "$home/.config/uwsm/env.d/60-intel-gles-override" \
+        "$home/.config/uwsm/env.d/61-software-render" \
+        "$home/.config/environment.d/omarchy-lite-gpu.conf" \
+        "$home/.local/state/omarchy-lite/legacy-gpu-applied" 2>/dev/null || true
+  restore_split_plugin_for_home "$home" "$uid_gid"
+}
+
+limine_line='KERNEL_CMDLINE[default]+=mitigations=off'
+apply_system() {
+  local conf=/etc/environment.d/omarchy-lite-gpu.conf
+  local limine=/etc/limine-entry-tool.d/omarchy-lite.conf
+  local home need_limine=0
+
+  mkdir -p /etc/environment.d /etc/limine-entry-tool.d 2>/dev/null || true
+
+  if (( LEGACY )); then
+    env_body >"$conf" 2>/dev/null || true
+
+    if [[ ! -f "$limine" ]] || ! grep -qxF "$limine_line" "$limine" 2>/dev/null; then
+      printf '%s\n' "$limine_line" >"$limine" 2>/dev/null || true
+      need_limine=1
+    fi
+
+    apply_to_home /root
+    if [[ -d /home ]]; then
+      for home in /home/*; do
+        [[ -d "$home" ]] && apply_to_home "$home"
+      done
+    fi
+  else
+    rm -f "$conf" 2>/dev/null || true
+    if [[ -f "$limine" ]]; then
+      rm -f "$limine" 2>/dev/null || true
+      need_limine=1
+    fi
+    rm -f "$MARKER" 2>/dev/null || true
+    remove_from_home /root
+    if [[ -d /home ]]; then
+      for home in /home/*; do
+        [[ -d "$home" ]] && remove_from_home "$home"
+      done
+    fi
+  fi
+
+  if (( need_limine )) && command -v limine-mkinitcpio >/dev/null 2>&1 \
+     && command -v limine-update >/dev/null 2>&1; then
+    if mountpoint -q /boot 2>/dev/null || mountpoint -q /efi 2>/dev/null; then
+      log "Rebuilding Limine boot entries for $GPU_LINE"
+      limine-mkinitcpio >>"$LOG" 2>&1 || log "limine-mkinitcpio failed (see $LOG)"
+      limine-update >>"$LOG" 2>&1 || log "limine-update failed (see $LOG)"
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+GPU_LINE=$(detect_gpu)
+log "Detected GPU: $GPU_LINE"
+
+LEGACY=0
+if (( FORCE_SW )) || is_legacy_gpu "$GPU_LINE"; then
+  LEGACY=1
+fi
+
+if [[ -f "$MARKER" ]] && (( FORCE == 0 )); then
+  log "Already applied. Use --force to re-run, or --force-software for recovery."
+  exit 0
+fi
+
+if (( LEGACY == 0 )); then
+  log "Modern GPU - no legacy workarounds applied."
+  if (( SYSTEM )); then apply_system; else remove_from_home "$HOME_DIR"; fi
+  exit 0
+fi
+
+log "Legacy Intel GPU detected - applying offline workarounds."
+if (( SYSTEM )); then
+  apply_system
+else
+  apply_to_home "$HOME_DIR"
+fi
+
+touch "$MARKER" 2>/dev/null || true
+log "Legacy GPU setup complete."
+if (( QUIET == 0 )); then
+  printf '\nLegacy Intel GPU detected - offline graphics workarounds applied.\n'
+  printf 'Log out and back in, or reboot. If the screen is still black, run:\n'
+  printf '  omarchy-lite-safe-mode\n'
+fi

@@ -1,0 +1,12 @@
+[Unit]
+Description=Omarchy Lite legacy GPU detection (offline)
+After=local-fs.target
+Before=sddm.service display-manager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/omarchy-lite-gpu-detect --system --quiet
+
+[Install]
+WantedBy=multi-user.target

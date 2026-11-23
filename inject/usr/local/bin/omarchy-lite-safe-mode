@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Omarchy Lite Safe Graphics Mode.
+# Forces the offline llvmpipe/GLES overrides and restarts the display manager.
+# Works with no network connection.
+set -uo pipefail
+
+DETECT=/usr/local/bin/omarchy-lite-gpu-detect
+
+if [[ ! -x "$DETECT" ]]; then
+  printf 'omarchy-lite-safe-mode: %s is missing\n' "$DETECT" >&2
+  exit 1
+fi
+
+if [[ $EUID -ne 0 ]]; then
+  # This is usually launched from the Omarchy menu, so pkexec is the right
+  # prompt mechanism. From a TTY, sudo also works via the fallback.
+  if command -v pkexec >/dev/null 2>&1; then
+    exec pkexec "$0" "$@"
+  fi
+  if command -v sudo >/dev/null 2>&1; then
+    exec sudo "$0" "$@"
+  fi
+  printf 'omarchy-lite-safe-mode: root privileges required\n' >&2
+  exit 1
+fi
+
+"$DETECT" --system --force-software
+rc=$?
+
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet sddm.service 2>/dev/null; then
+  printf '\nRestarting SDDM to apply Safe Graphics Mode...\n'
+  systemctl restart sddm.service || printf 'Could not restart SDDM; reboot instead.\n' >&2
+elif command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet display-manager.service 2>/dev/null; then
+  printf '\nRestarting the display manager to apply Safe Graphics Mode...\n'
+  systemctl restart display-manager.service || printf 'Could not restart display manager; reboot instead.\n' >&2
+else
+  printf '\nNo active display manager found. Reboot to apply the changes.\n'
+fi
+
+exit "$rc"

@@ -1,0 +1,16 @@
+# Large build artifacts are intentionally not stored in git.
+*.iso
+*.img
+*.img.zst
+*.sfs
+*.sfs.sha512
+*.tar.gz
+*.log
+
+build/
+work/
+out/
+squashfs-root/
+isosource/
+isoverify/
+rootverify/
