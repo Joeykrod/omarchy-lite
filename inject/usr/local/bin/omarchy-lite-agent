@@ -144,6 +144,26 @@ safe_graphics() {
   fi
 }
 
+fix_colors() {
+  say "Fix dark/washed-out colors (old GPU)"
+  local f="$CONFIG_DIR/looknfeel.lua"
+  if grep -q 'cm_enabled' "$f" 2>/dev/null; then
+    note "Color-management fix is already present."
+  else
+    cat >>"$f" <<'EOF'
+
+-- Omarchy Lite: correct colors on old GLES 3.0 GPUs.
+-- Hyprland's color-management shader needs GLSL ES 3.20, which these GPUs
+-- do not provide. Disabling it avoids the broken dark/washed-out fallback.
+hl.config({ render = { cm_enabled = false } })
+EOF
+    note "Added the color fix to $f"
+  fi
+  confirm "Reload Hyprland now?" && {
+    command -v hyprctl >/dev/null 2>&1 && hyprctl reload
+  }
+}
+
 # ---------------------------------------------------------------------------
 system_info() {
   say "System information"
@@ -173,6 +193,7 @@ main() {
     choice=$(choose "$AGENT_NAME - what do you need?" \
       "Apply low-RAM graphics profile" \
       "Repair legacy GPU (offline Safe Graphics Mode)" \
+      "Fix dark/washed-out colors (old GPU)" \
       "Fix display / resolution" \
       "Check network" \
       "System information" \
@@ -183,6 +204,7 @@ main() {
     case "$choice" in
       "Apply low-RAM graphics profile") apply_lowram ;;
       "Repair legacy GPU (offline Safe Graphics Mode)") safe_graphics ;;
+      "Fix dark/washed-out colors (old GPU)") fix_colors ;;
       "Fix display / resolution")       fix_display ;;
       "Check network")                  network_check ;;
       "System information")             system_info ;;

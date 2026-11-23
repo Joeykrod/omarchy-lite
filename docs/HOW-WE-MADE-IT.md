@@ -347,6 +347,45 @@ current user's config and is a no-op on modern GPUs.
 
 ---
 
+## Step 8a — fixing the color-blind-looking interface
+
+Everything worked, but the desktop colors looked wrong — dark/washed out, as
+if a color filter were applied.
+
+This is a known Hyprland failure on older GPUs. The color-management shader
+requires GLSL ES 3.20, but these Intel GMA chips only advertise GLES 3.0. The
+shader fails to compile and Hyprland falls back to a broken path that renders
+colors badly.
+
+### Fix
+
+Add this to the injected user Hyprland config:
+
+```lua
+hl.config({
+  render = {
+    cm_enabled = false,
+  },
+})
+```
+
+This is in `inject/etc/skel/.config/hypr/looknfeel.lua`, so it is part of a
+fresh install. It is offline, needs no package, and does not change the theme,
+launcher, or keybindings.
+
+### Applying it to an already-installed machine without reinstalling
+
+```bash
+cat >> ~/.config/hypr/looknfeel.lua <<'EOF'
+
+-- Omarchy Lite: correct colors on old GLES 3.0 GPUs
+hl.config({ render = { cm_enabled = false } })
+EOF
+hyprctl reload
+```
+
+---
+
 ## Step 9 — clean-source note
 
 An earlier experiment also placed duplicate Hyprland config files under
@@ -377,13 +416,14 @@ Before publishing/flashing we verified:
 5. PVD volume ID and date,
 6. live squashfs contains the GPU scripts and safe-mode command,
 7. installed root image contains the same scripts and enabled systemd unit,
-8. USB first 1 MiB hash matches the ISO,
+8. USB verified byte-for-byte against the ISO for the full ISO length after
+   flashing, with the installer checksums rechecked from the USB itself,
 9. USB partition table after flashing.
 
 Final published ISO SHA-256:
 
 ```text
-b6320bd3db7a4e6f863722495c48964a85c18610b9974556e175958124c67e9b
+358384ee38a4cb52039551fd57eadd02e0a0a281eb32457dd264078a15d4f402
 ```
 
 ---

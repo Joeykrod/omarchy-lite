@@ -17,6 +17,8 @@ WHAT IS DIFFERENT
   - Hyprland animations disabled
   - blur/shadow off
   - GDK_SCALE 1 instead of 2 (much smaller framebuffers)
+  - Hyprland color management disabled on old GLES 3.0 GPUs so colors are
+    correct instead of dark/washed out
 
 * Automatic, fully offline legacy GPU detection:
   - Intel GMA 950 / 915 / 945 / G31 / X3100 / X4500 and similar GPUs are

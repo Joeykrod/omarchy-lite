@@ -34,6 +34,7 @@ agent, a bundled AI coding agent, and automatic legacy-GPU workarounds.
 |---|---|
 | Low-RAM boot entry | Disables costly boot noise, uses `copytoram=n`, adds `mitigations=off` |
 | Low-RAM desktop defaults | Animations off, blur/shadow off, `GDK_SCALE=1` |
+| Correct colors on old GPUs | Hyprland color management disabled to avoid dark/washed-out fallback shaders |
 | Bundled OpenCode | Baseline x64 build, no AVX2 required, no install needed |
 | Guided agent | `omarchy-lite-agent` on `SUPER + ALT + A` |
 | Automatic legacy GPU detection | Applies software-rendering workarounds only on old Intel GPUs |
@@ -208,7 +209,7 @@ rendering overrides before SDDM starts.
 ## Published build checksum
 
 ```text
-b6320bd3db7a4e6f863722495c48964a85c18610b9974556e175958124c67e9b  omarchy-lite.iso
+358384ee38a4cb52039551fd57eadd02e0a0a281eb32457dd264078a15d4f402  omarchy-lite.iso
 ```
 
 This hash is for the build described in `docs/HOW-WE-MADE-IT.md`. Any rebuild

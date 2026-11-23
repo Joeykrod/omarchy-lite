@@ -15,6 +15,13 @@ hl.config({
     disable_splash_rendering = true,
     disable_scale_notification = true,
   },
+
+  -- Old Intel GMA GPUs only advertise GLES 3.0. Hyprland's color-management
+  -- shader needs GLSL ES 3.20 and falls back to a broken/dark path on these
+  -- machines. Disable color management so colors stay correct.
+  render = {
+    cm_enabled = false,
+  },
 })
 
 -- Opt another application in to Omarchy's standard transparency.

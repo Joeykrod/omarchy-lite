@@ -1,8 +1,8 @@
-# Hashes recorded from the published 2026-11-22 build.
+# Hashes recorded from the published 2026-11-23 build (color fix).
 # These change on any rebuild; verify the installer checksums from the ISO itself.
 
 # arch/x86_64/omarchy-root.img.zst
-2a09fb017eb24392d55d1e51cd84b015e301408b9d3e201a0c1e8d5e78d1602f  omarchy-root.img.zst
+a5f30a0910117776b8798112b17b48b232808f165b43a17fa30fed5baed575c1  omarchy-root.img.zst
 
 # arch/x86_64/airootfs.sfs (SHA-512)
-98f41bbf9dbb8f6073edac46d78a157545f1e6db0b02075ce73b54a3db8a6590e43d3219744be59912c1d7490b6eb03ba9568696f190a1fb8e37f2d4058956cd  airootfs.sfs
+59ef8cebc9fed9292b64e780946140cb8c915194bd70a741d5705fa928fab93aa005db718c2ada880a8096dc9a7ec366cb6c604b7759a0b0f735968da396ce6c  airootfs.sfs

@@ -65,6 +65,25 @@ drop-in. Then reboot.
 
 ---
 
+## Colors look dark/washed out, like a color-blind filter
+
+On old GLES 3.0 GPUs, Hyprland's color-management shader needs GLSL ES 3.20 and
+falls back to a broken path. Disable color management:
+
+```bash
+cat >> ~/.config/hypr/looknfeel.lua <<'EOF'
+
+-- Omarchy Lite: correct colors on old GLES 3.0 GPUs
+hl.config({ render = { cm_enabled = false } })
+EOF
+hyprctl reload
+```
+
+This is already baked into fresh installs from the fixed ISO. No reboot or
+internet connection is needed.
+
+---
+
 ## OpenCode will not start
 
 The binary is bundled at:
